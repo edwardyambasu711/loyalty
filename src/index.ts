@@ -6,6 +6,7 @@ import usersRouter from "../routes/users.js";
 import jobsRouter from "../routes/jobs.js";
 import applicationsRouter from "../routes/applications.js";
 import contactsRouter from "../routes/contacts.js";
+import superadminRouter from "../routes/superadmin.js";
 
 dotenv.config();
 
@@ -28,6 +29,7 @@ app.use("/api/auth", usersRouter);
 app.use("/api/jobs", jobsRouter);
 app.use("/api/applications", applicationsRouter);
 app.use("/api/contacts", contactsRouter);
+app.use("/api/superadmin", superadminRouter);
 
 // Error handling
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {

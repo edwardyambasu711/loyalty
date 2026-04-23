@@ -74,6 +74,89 @@ export async function initializeDatabase(): Promise<Database> {
       message TEXT NOT NULL,
       createdAt TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS organizations (
+      id TEXT PRIMARY KEY,
+      userId TEXT NOT NULL,
+      name TEXT NOT NULL,
+      description TEXT,
+      logo TEXT,
+      website TEXT,
+      industry TEXT,
+      size TEXT,
+      phone TEXT,
+      verified BOOLEAN DEFAULT 0,
+      createdAt TEXT NOT NULL,
+      updatedAt TEXT NOT NULL,
+      FOREIGN KEY (userId) REFERENCES users(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS blogs (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      slug TEXT UNIQUE NOT NULL,
+      author TEXT NOT NULL,
+      content TEXT NOT NULL,
+      excerpt TEXT,
+      image TEXT,
+      tags TEXT,
+      published BOOLEAN DEFAULT 0,
+      views INTEGER DEFAULT 0,
+      createdAt TEXT NOT NULL,
+      updatedAt TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS case_studies (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      slug TEXT UNIQUE NOT NULL,
+      client TEXT NOT NULL,
+      challenge TEXT NOT NULL,
+      solution TEXT NOT NULL,
+      results TEXT NOT NULL,
+      image TEXT,
+      tags TEXT,
+      published BOOLEAN DEFAULT 0,
+      createdAt TEXT NOT NULL,
+      updatedAt TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS events (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      description TEXT NOT NULL,
+      location TEXT NOT NULL,
+      eventDate TEXT NOT NULL,
+      eventTime TEXT NOT NULL,
+      image TEXT,
+      capacity INTEGER,
+      registered INTEGER DEFAULT 0,
+      published BOOLEAN DEFAULT 0,
+      createdAt TEXT NOT NULL,
+      updatedAt TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS testimonials (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      title TEXT NOT NULL,
+      company TEXT NOT NULL,
+      content TEXT NOT NULL,
+      image TEXT,
+      rating INTEGER,
+      published BOOLEAN DEFAULT 0,
+      createdAt TEXT NOT NULL,
+      updatedAt TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS featured_jobs (
+      id TEXT PRIMARY KEY,
+      jobId TEXT NOT NULL,
+      featured BOOLEAN DEFAULT 1,
+      featuredUntil TEXT,
+      createdAt TEXT NOT NULL,
+      FOREIGN KEY (jobId) REFERENCES jobs(id)
+    );
   `);
 
   return db;
