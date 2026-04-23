@@ -1,7 +1,7 @@
 import express, { Router, Request, Response } from "express";
 import bcryptjs from "bcryptjs";
 import { v4 as uuidv4 } from "uuid";
-import { getDatabase } from "../src/db.js";
+import { getDatabase, User, Organization, Blog, CaseStudy, Event, Testimonial, FeaturedJob, Job, Application } from "../src/db.js";
 import { authenticateSuperAdmin, generateToken, AuthRequest } from "../middleware/auth.js";
 
 const router = Router();
@@ -17,8 +17,9 @@ router.post("/login", async (req: Request, res: Response) => {
       return res.status(400).json({ error: "Email and password required" });
     }
 
-    const db = await getDatabase();
-    const user = await db.get("SELECT * FROM users WHERE email = ?", [email]);
+    await getDatabase();
+
+    const user = await User.findOne({ email });
 
     if (!user) {
       return res.status(401).json({ error: "Invalid credentials" });
@@ -54,8 +55,8 @@ router.post("/login", async (req: Request, res: Response) => {
 router.post("/register", authenticateSuperAdmin, async (req: Request, res: Response) => {
   try {
     // Only allow if requesting user is superadmin
-    const db = await getDatabase();
-    const requestingUser = await db.get("SELECT * FROM users WHERE id = ?", [req.userId]);
+    await getDatabase();
+    const requestingUser = await User.findOne({ id: req.userId });
 
     if (!requestingUser || requestingUser.role !== "superadmin") {
       return res.status(403).json({ error: "Only superadmins can create accounts" });
@@ -67,19 +68,27 @@ router.post("/register", authenticateSuperAdmin, async (req: Request, res: Respo
       return res.status(400).json({ error: "Email and password required" });
     }
 
-    const existingUser = await db.get("SELECT * FROM users WHERE email = ?", [email]);
+    const existingUser = await User.findOne({ email });
     if (existingUser) {
       return res.status(400).json({ error: "User already exists" });
     }
 
     const hashedPassword = await bcryptjs.hash(password, 10);
     const userId = uuidv4();
-    const now = new Date().toISOString();
+    const now = new Date();
 
-    await db.run(
-      "INSERT INTO users (id, email, password, firstName, lastName, role, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-      [userId, email, hashedPassword, firstName || "", lastName || "", "superadmin", now, now]
-    );
+    const user = new User({
+      id: userId,
+      email,
+      password: hashedPassword,
+      firstName: firstName || "",
+      lastName: lastName || "",
+      role: "superadmin",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await user.save();
 
     res.json({
       user: {
@@ -101,14 +110,14 @@ router.post("/register", authenticateSuperAdmin, async (req: Request, res: Respo
 // Get all users
 router.get("/users", authenticateSuperAdmin, async (req: AuthRequest, res: Response) => {
   try {
-    const db = await getDatabase();
-    const user = await db.get("SELECT * FROM users WHERE id = ?", [req.userId]);
+    await getDatabase();
+    const user = await User.findOne({ id: req.userId });
 
     if (user?.role !== "superadmin") {
       return res.status(403).json({ error: "Unauthorized" });
     }
 
-    const users = await db.all("SELECT id, email, firstName, lastName, role, company, createdAt FROM users");
+    const users = await User.find({}, { id: 1, email: 1, firstName: 1, lastName: 1, role: 1, company: 1, createdAt: 1 });
     res.json(users);
   } catch (error) {
     console.error("Get users error:", error);
@@ -119,14 +128,14 @@ router.get("/users", authenticateSuperAdmin, async (req: AuthRequest, res: Respo
 // Get user details
 router.get("/users/:userId", authenticateSuperAdmin, async (req: AuthRequest, res: Response) => {
   try {
-    const db = await getDatabase();
-    const superAdmin = await db.get("SELECT * FROM users WHERE id = ?", [req.userId]);
+    await getDatabase();
+    const superAdmin = await User.findOne({ id: req.userId });
 
     if (superAdmin?.role !== "superadmin") {
       return res.status(403).json({ error: "Unauthorized" });
     }
 
-    const user = await db.get("SELECT * FROM users WHERE id = ?", [req.params.userId]);
+    const user = await User.findOne({ id: req.params.userId });
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
@@ -141,14 +150,14 @@ router.get("/users/:userId", authenticateSuperAdmin, async (req: AuthRequest, re
 // Delete user
 router.delete("/users/:userId", authenticateSuperAdmin, async (req: AuthRequest, res: Response) => {
   try {
-    const db = await getDatabase();
-    const superAdmin = await db.get("SELECT * FROM users WHERE id = ?", [req.userId]);
+    await getDatabase();
+    const superAdmin = await User.findOne({ id: req.userId });
 
     if (superAdmin?.role !== "superadmin") {
       return res.status(403).json({ error: "Unauthorized" });
     }
 
-    await db.run("DELETE FROM users WHERE id = ?", [req.params.userId]);
+    await User.deleteOne({ id: req.params.userId });
     res.json({ message: "User deleted successfully" });
   } catch (error) {
     console.error("Delete user error:", error);
@@ -161,14 +170,14 @@ router.delete("/users/:userId", authenticateSuperAdmin, async (req: AuthRequest,
 // Get all organizations
 router.get("/organizations", authenticateSuperAdmin, async (req: AuthRequest, res: Response) => {
   try {
-    const db = await getDatabase();
-    const user = await db.get("SELECT * FROM users WHERE id = ?", [req.userId]);
+    await getDatabase();
+    const user = await User.findOne({ id: req.userId });
 
     if (user?.role !== "superadmin") {
       return res.status(403).json({ error: "Unauthorized" });
     }
 
-    const orgs = await db.all("SELECT * FROM organizations");
+    const orgs = await Organization.find({});
     res.json(orgs);
   } catch (error) {
     console.error("Get organizations error:", error);
@@ -179,14 +188,17 @@ router.get("/organizations", authenticateSuperAdmin, async (req: AuthRequest, re
 // Verify organization
 router.put("/organizations/:orgId/verify", authenticateSuperAdmin, async (req: AuthRequest, res: Response) => {
   try {
-    const db = await getDatabase();
-    const user = await db.get("SELECT * FROM users WHERE id = ?", [req.userId]);
+    await getDatabase();
+    const user = await User.findOne({ id: req.userId });
 
     if (user?.role !== "superadmin") {
       return res.status(403).json({ error: "Unauthorized" });
     }
 
-    await db.run("UPDATE organizations SET verified = 1, updatedAt = ? WHERE id = ?", [new Date().toISOString(), req.params.orgId]);
+    await Organization.findOneAndUpdate(
+      { id: req.params.orgId },
+      { verified: true, updatedAt: new Date() }
+    );
     res.json({ message: "Organization verified" });
   } catch (error) {
     console.error("Verify org error:", error);
@@ -199,8 +211,8 @@ router.put("/organizations/:orgId/verify", authenticateSuperAdmin, async (req: A
 // Get all blogs
 router.get("/blogs", authenticateSuperAdmin, async (req: AuthRequest, res: Response) => {
   try {
-    const db = await getDatabase();
-    const blogs = await db.all("SELECT * FROM blogs ORDER BY createdAt DESC");
+    await getDatabase();
+    const blogs = await Blog.find({}).sort({ createdAt: -1 });
     res.json(blogs);
   } catch (error) {
     console.error("Get blogs error:", error);
@@ -211,8 +223,8 @@ router.get("/blogs", authenticateSuperAdmin, async (req: AuthRequest, res: Respo
 // Create blog
 router.post("/blogs", authenticateSuperAdmin, async (req: AuthRequest, res: Response) => {
   try {
-    const db = await getDatabase();
-    const user = await db.get("SELECT * FROM users WHERE id = ?", [req.userId]);
+    await getDatabase();
+    const user = await User.findOne({ id: req.userId });
 
     if (user?.role !== "superadmin") {
       return res.status(403).json({ error: "Unauthorized" });
@@ -226,12 +238,23 @@ router.post("/blogs", authenticateSuperAdmin, async (req: AuthRequest, res: Resp
 
     const id = uuidv4();
     const slug = title.toLowerCase().replace(/\s+/g, "-");
-    const now = new Date().toISOString();
+    const now = new Date();
 
-    await db.run(
-      "INSERT INTO blogs (id, title, slug, author, content, excerpt, image, tags, published, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-      [id, title, slug, user.email, content, excerpt || "", image || "", tags || "", published || false, now, now]
-    );
+    const blog = new Blog({
+      id,
+      title,
+      slug,
+      author: user.email,
+      content,
+      excerpt: excerpt || "",
+      image: image || "",
+      tags: tags || "",
+      published: published || false,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await blog.save();
 
     res.json({ id, title, slug });
   } catch (error) {
@@ -243,19 +266,27 @@ router.post("/blogs", authenticateSuperAdmin, async (req: AuthRequest, res: Resp
 // Update blog
 router.put("/blogs/:blogId", authenticateSuperAdmin, async (req: AuthRequest, res: Response) => {
   try {
-    const db = await getDatabase();
-    const user = await db.get("SELECT * FROM users WHERE id = ?", [req.userId]);
+    await getDatabase();
+    const user = await User.findOne({ id: req.userId });
 
     if (user?.role !== "superadmin") {
       return res.status(403).json({ error: "Unauthorized" });
     }
 
     const { title, content, excerpt, image, tags, published } = req.body;
-    const now = new Date().toISOString();
+    const now = new Date();
 
-    await db.run(
-      "UPDATE blogs SET title = ?, content = ?, excerpt = ?, image = ?, tags = ?, published = ?, updatedAt = ? WHERE id = ?",
-      [title, content, excerpt || "", image || "", tags || "", published || false, now, req.params.blogId]
+    await Blog.findOneAndUpdate(
+      { id: req.params.blogId },
+      {
+        title,
+        content,
+        excerpt: excerpt || "",
+        image: image || "",
+        tags: tags || "",
+        published: published || false,
+        updatedAt: now,
+      }
     );
 
     res.json({ message: "Blog updated" });
@@ -268,14 +299,14 @@ router.put("/blogs/:blogId", authenticateSuperAdmin, async (req: AuthRequest, re
 // Delete blog
 router.delete("/blogs/:blogId", authenticateSuperAdmin, async (req: AuthRequest, res: Response) => {
   try {
-    const db = await getDatabase();
-    const user = await db.get("SELECT * FROM users WHERE id = ?", [req.userId]);
+    await getDatabase();
+    const user = await User.findOne({ id: req.userId });
 
     if (user?.role !== "superadmin") {
       return res.status(403).json({ error: "Unauthorized" });
     }
 
-    await db.run("DELETE FROM blogs WHERE id = ?", [req.params.blogId]);
+    await Blog.deleteOne({ id: req.params.blogId });
     res.json({ message: "Blog deleted" });
   } catch (error) {
     console.error("Delete blog error:", error);
@@ -288,8 +319,8 @@ router.delete("/blogs/:blogId", authenticateSuperAdmin, async (req: AuthRequest,
 // Get all case studies
 router.get("/case-studies", authenticateSuperAdmin, async (req: AuthRequest, res: Response) => {
   try {
-    const db = await getDatabase();
-    const studies = await db.all("SELECT * FROM case_studies ORDER BY createdAt DESC");
+    await getDatabase();
+    const studies = await CaseStudy.find({}).sort({ createdAt: -1 });
     res.json(studies);
   } catch (error) {
     console.error("Get case studies error:", error);
@@ -300,8 +331,8 @@ router.get("/case-studies", authenticateSuperAdmin, async (req: AuthRequest, res
 // Create case study
 router.post("/case-studies", authenticateSuperAdmin, async (req: AuthRequest, res: Response) => {
   try {
-    const db = await getDatabase();
-    const user = await db.get("SELECT * FROM users WHERE id = ?", [req.userId]);
+    await getDatabase();
+    const user = await User.findOne({ id: req.userId });
 
     if (user?.role !== "superadmin") {
       return res.status(403).json({ error: "Unauthorized" });
@@ -315,12 +346,24 @@ router.post("/case-studies", authenticateSuperAdmin, async (req: AuthRequest, re
 
     const id = uuidv4();
     const slug = title.toLowerCase().replace(/\s+/g, "-");
-    const now = new Date().toISOString();
+    const now = new Date();
 
-    await db.run(
-      "INSERT INTO case_studies (id, title, slug, client, challenge, solution, results, image, tags, published, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-      [id, title, slug, client, challenge, solution, results, image || "", tags || "", published || false, now, now]
-    );
+    const caseStudy = new CaseStudy({
+      id,
+      title,
+      slug,
+      client,
+      challenge,
+      solution,
+      results,
+      image: image || "",
+      tags: tags || "",
+      published: published || false,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await caseStudy.save();
 
     res.json({ id, title, slug });
   } catch (error) {
@@ -332,19 +375,29 @@ router.post("/case-studies", authenticateSuperAdmin, async (req: AuthRequest, re
 // Update case study
 router.put("/case-studies/:studyId", authenticateSuperAdmin, async (req: AuthRequest, res: Response) => {
   try {
-    const db = await getDatabase();
-    const user = await db.get("SELECT * FROM users WHERE id = ?", [req.userId]);
+    await getDatabase();
+    const user = await User.findOne({ id: req.userId });
 
     if (user?.role !== "superadmin") {
       return res.status(403).json({ error: "Unauthorized" });
     }
 
     const { title, client, challenge, solution, results, image, tags, published } = req.body;
-    const now = new Date().toISOString();
+    const now = new Date();
 
-    await db.run(
-      "UPDATE case_studies SET title = ?, client = ?, challenge = ?, solution = ?, results = ?, image = ?, tags = ?, published = ?, updatedAt = ? WHERE id = ?",
-      [title, client, challenge, solution, results, image || "", tags || "", published || false, now, req.params.studyId]
+    await CaseStudy.findOneAndUpdate(
+      { id: req.params.studyId },
+      {
+        title,
+        client,
+        challenge,
+        solution,
+        results,
+        image: image || "",
+        tags: tags || "",
+        published: published || false,
+        updatedAt: now,
+      }
     );
 
     res.json({ message: "Case study updated" });
@@ -357,14 +410,14 @@ router.put("/case-studies/:studyId", authenticateSuperAdmin, async (req: AuthReq
 // Delete case study
 router.delete("/case-studies/:studyId", authenticateSuperAdmin, async (req: AuthRequest, res: Response) => {
   try {
-    const db = await getDatabase();
-    const user = await db.get("SELECT * FROM users WHERE id = ?", [req.userId]);
+    await getDatabase();
+    const user = await User.findOne({ id: req.userId });
 
     if (user?.role !== "superadmin") {
       return res.status(403).json({ error: "Unauthorized" });
     }
 
-    await db.run("DELETE FROM case_studies WHERE id = ?", [req.params.studyId]);
+    await CaseStudy.deleteOne({ id: req.params.studyId });
     res.json({ message: "Case study deleted" });
   } catch (error) {
     console.error("Delete case study error:", error);
@@ -377,8 +430,8 @@ router.delete("/case-studies/:studyId", authenticateSuperAdmin, async (req: Auth
 // Get all events
 router.get("/events", authenticateSuperAdmin, async (req: AuthRequest, res: Response) => {
   try {
-    const db = await getDatabase();
-    const events = await db.all("SELECT * FROM events ORDER BY eventDate DESC");
+    await getDatabase();
+    const events = await Event.find({}).sort({ eventDate: -1 });
     res.json(events);
   } catch (error) {
     console.error("Get events error:", error);
@@ -389,8 +442,8 @@ router.get("/events", authenticateSuperAdmin, async (req: AuthRequest, res: Resp
 // Create event
 router.post("/events", authenticateSuperAdmin, async (req: AuthRequest, res: Response) => {
   try {
-    const db = await getDatabase();
-    const user = await db.get("SELECT * FROM users WHERE id = ?", [req.userId]);
+    await getDatabase();
+    const user = await User.findOne({ id: req.userId });
 
     if (user?.role !== "superadmin") {
       return res.status(403).json({ error: "Unauthorized" });
@@ -403,12 +456,23 @@ router.post("/events", authenticateSuperAdmin, async (req: AuthRequest, res: Res
     }
 
     const id = uuidv4();
-    const now = new Date().toISOString();
+    const now = new Date();
 
-    await db.run(
-      "INSERT INTO events (id, title, description, location, eventDate, eventTime, image, capacity, published, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-      [id, title, description, location, eventDate, eventTime, image || "", capacity || 0, published || false, now, now]
-    );
+    const event = new Event({
+      id,
+      title,
+      description,
+      location,
+      eventDate,
+      eventTime,
+      image: image || "",
+      capacity: capacity || 0,
+      published: published || false,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await event.save();
 
     res.json({ id, title });
   } catch (error) {
@@ -420,19 +484,29 @@ router.post("/events", authenticateSuperAdmin, async (req: AuthRequest, res: Res
 // Update event
 router.put("/events/:eventId", authenticateSuperAdmin, async (req: AuthRequest, res: Response) => {
   try {
-    const db = await getDatabase();
-    const user = await db.get("SELECT * FROM users WHERE id = ?", [req.userId]);
+    await getDatabase();
+    const user = await User.findOne({ id: req.userId });
 
     if (user?.role !== "superadmin") {
       return res.status(403).json({ error: "Unauthorized" });
     }
 
     const { title, description, location, eventDate, eventTime, image, capacity, published } = req.body;
-    const now = new Date().toISOString();
+    const now = new Date();
 
-    await db.run(
-      "UPDATE events SET title = ?, description = ?, location = ?, eventDate = ?, eventTime = ?, image = ?, capacity = ?, published = ?, updatedAt = ? WHERE id = ?",
-      [title, description, location, eventDate, eventTime, image || "", capacity || 0, published || false, now, req.params.eventId]
+    await Event.findOneAndUpdate(
+      { id: req.params.eventId },
+      {
+        title,
+        description,
+        location,
+        eventDate,
+        eventTime,
+        image: image || "",
+        capacity: capacity || 0,
+        published: published || false,
+        updatedAt: now,
+      }
     );
 
     res.json({ message: "Event updated" });
@@ -445,14 +519,14 @@ router.put("/events/:eventId", authenticateSuperAdmin, async (req: AuthRequest, 
 // Delete event
 router.delete("/events/:eventId", authenticateSuperAdmin, async (req: AuthRequest, res: Response) => {
   try {
-    const db = await getDatabase();
-    const user = await db.get("SELECT * FROM users WHERE id = ?", [req.userId]);
+    await getDatabase();
+    const user = await User.findOne({ id: req.userId });
 
     if (user?.role !== "superadmin") {
       return res.status(403).json({ error: "Unauthorized" });
     }
 
-    await db.run("DELETE FROM events WHERE id = ?", [req.params.eventId]);
+    await Event.deleteOne({ id: req.params.eventId });
     res.json({ message: "Event deleted" });
   } catch (error) {
     console.error("Delete event error:", error);
@@ -465,8 +539,8 @@ router.delete("/events/:eventId", authenticateSuperAdmin, async (req: AuthReques
 // Get all testimonials
 router.get("/testimonials", authenticateSuperAdmin, async (req: AuthRequest, res: Response) => {
   try {
-    const db = await getDatabase();
-    const testimonials = await db.all("SELECT * FROM testimonials ORDER BY createdAt DESC");
+    await getDatabase();
+    const testimonials = await Testimonial.find({}).sort({ createdAt: -1 });
     res.json(testimonials);
   } catch (error) {
     console.error("Get testimonials error:", error);
@@ -477,8 +551,8 @@ router.get("/testimonials", authenticateSuperAdmin, async (req: AuthRequest, res
 // Create testimonial
 router.post("/testimonials", authenticateSuperAdmin, async (req: AuthRequest, res: Response) => {
   try {
-    const db = await getDatabase();
-    const user = await db.get("SELECT * FROM users WHERE id = ?", [req.userId]);
+    await getDatabase();
+    const user = await User.findOne({ id: req.userId });
 
     if (user?.role !== "superadmin") {
       return res.status(403).json({ error: "Unauthorized" });
@@ -491,12 +565,22 @@ router.post("/testimonials", authenticateSuperAdmin, async (req: AuthRequest, re
     }
 
     const id = uuidv4();
-    const now = new Date().toISOString();
+    const now = new Date();
 
-    await db.run(
-      "INSERT INTO testimonials (id, name, title, company, content, image, rating, published, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-      [id, name, title, company, content, image || "", rating || 5, published || false, now, now]
-    );
+    const testimonial = new Testimonial({
+      id,
+      name,
+      title,
+      company,
+      content,
+      image: image || "",
+      rating: rating || 5,
+      published: published || false,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await testimonial.save();
 
     res.json({ id, name });
   } catch (error) {
@@ -508,19 +592,28 @@ router.post("/testimonials", authenticateSuperAdmin, async (req: AuthRequest, re
 // Update testimonial
 router.put("/testimonials/:testimonialId", authenticateSuperAdmin, async (req: AuthRequest, res: Response) => {
   try {
-    const db = await getDatabase();
-    const user = await db.get("SELECT * FROM users WHERE id = ?", [req.userId]);
+    await getDatabase();
+    const user = await User.findOne({ id: req.userId });
 
     if (user?.role !== "superadmin") {
       return res.status(403).json({ error: "Unauthorized" });
     }
 
     const { name, title, company, content, image, rating, published } = req.body;
-    const now = new Date().toISOString();
+    const now = new Date();
 
-    await db.run(
-      "UPDATE testimonials SET name = ?, title = ?, company = ?, content = ?, image = ?, rating = ?, published = ?, updatedAt = ? WHERE id = ?",
-      [name, title, company, content, image || "", rating || 5, published || false, now, req.params.testimonialId]
+    await Testimonial.findOneAndUpdate(
+      { id: req.params.testimonialId },
+      {
+        name,
+        title,
+        company,
+        content,
+        image: image || "",
+        rating: rating || 5,
+        published: published || false,
+        updatedAt: now,
+      }
     );
 
     res.json({ message: "Testimonial updated" });
@@ -533,14 +626,14 @@ router.put("/testimonials/:testimonialId", authenticateSuperAdmin, async (req: A
 // Delete testimonial
 router.delete("/testimonials/:testimonialId", authenticateSuperAdmin, async (req: AuthRequest, res: Response) => {
   try {
-    const db = await getDatabase();
-    const user = await db.get("SELECT * FROM users WHERE id = ?", [req.userId]);
+    await getDatabase();
+    const user = await User.findOne({ id: req.userId });
 
     if (user?.role !== "superadmin") {
       return res.status(403).json({ error: "Unauthorized" });
     }
 
-    await db.run("DELETE FROM testimonials WHERE id = ?", [req.params.testimonialId]);
+    await Testimonial.deleteOne({ id: req.params.testimonialId });
     res.json({ message: "Testimonial deleted" });
   } catch (error) {
     console.error("Delete testimonial error:", error);
@@ -553,10 +646,8 @@ router.delete("/testimonials/:testimonialId", authenticateSuperAdmin, async (req
 // Get featured jobs
 router.get("/featured-jobs", authenticateSuperAdmin, async (req: AuthRequest, res: Response) => {
   try {
-    const db = await getDatabase();
-    const featured = await db.all(
-      "SELECT fj.*, j.title, j.company, j.description FROM featured_jobs fj JOIN jobs j ON fj.jobId = j.id WHERE fj.featured = 1"
-    );
+    await getDatabase();
+    const featured = await FeaturedJob.find({ featured: true }).populate('jobId');
     res.json(featured);
   } catch (error) {
     console.error("Get featured jobs error:", error);
@@ -567,8 +658,8 @@ router.get("/featured-jobs", authenticateSuperAdmin, async (req: AuthRequest, re
 // Feature a job
 router.post("/featured-jobs", authenticateSuperAdmin, async (req: AuthRequest, res: Response) => {
   try {
-    const db = await getDatabase();
-    const user = await db.get("SELECT * FROM users WHERE id = ?", [req.userId]);
+    await getDatabase();
+    const user = await User.findOne({ id: req.userId });
 
     if (user?.role !== "superadmin") {
       return res.status(403).json({ error: "Unauthorized" });
@@ -581,12 +672,17 @@ router.post("/featured-jobs", authenticateSuperAdmin, async (req: AuthRequest, r
     }
 
     const id = uuidv4();
-    const now = new Date().toISOString();
+    const now = new Date();
 
-    await db.run(
-      "INSERT INTO featured_jobs (id, jobId, featured, featuredUntil, createdAt) VALUES (?, ?, ?, ?, ?)",
-      [id, jobId, true, featuredUntil || "", now]
-    );
+    const featuredJob = new FeaturedJob({
+      id,
+      jobId,
+      featured: true,
+      featuredUntil: featuredUntil || null,
+      createdAt: now,
+    });
+
+    await featuredJob.save();
 
     res.json({ id, jobId });
   } catch (error) {
@@ -598,14 +694,14 @@ router.post("/featured-jobs", authenticateSuperAdmin, async (req: AuthRequest, r
 // Remove featured job
 router.delete("/featured-jobs/:featuredJobId", authenticateSuperAdmin, async (req: AuthRequest, res: Response) => {
   try {
-    const db = await getDatabase();
-    const user = await db.get("SELECT * FROM users WHERE id = ?", [req.userId]);
+    await getDatabase();
+    const user = await User.findOne({ id: req.userId });
 
     if (user?.role !== "superadmin") {
       return res.status(403).json({ error: "Unauthorized" });
     }
 
-    await db.run("DELETE FROM featured_jobs WHERE id = ?", [req.params.featuredJobId]);
+    await FeaturedJob.deleteOne({ id: req.params.featuredJobId });
     res.json({ message: "Job unfeatured" });
   } catch (error) {
     console.error("Remove featured job error:", error);
@@ -618,14 +714,14 @@ router.delete("/featured-jobs/:featuredJobId", authenticateSuperAdmin, async (re
 // Get all jobs (admin view)
 router.get("/jobs", authenticateSuperAdmin, async (req: AuthRequest, res: Response) => {
   try {
-    const db = await getDatabase();
-    const user = await db.get("SELECT * FROM users WHERE id = ?", [req.userId]);
+    await getDatabase();
+    const user = await User.findOne({ id: req.userId });
 
     if (user?.role !== "superadmin") {
       return res.status(403).json({ error: "Unauthorized" });
     }
 
-    const jobs = await db.all("SELECT * FROM jobs ORDER BY createdAt DESC");
+    const jobs = await Job.find({}).sort({ createdAt: -1 });
     res.json(jobs);
   } catch (error) {
     console.error("Get jobs error:", error);
@@ -636,14 +732,14 @@ router.get("/jobs", authenticateSuperAdmin, async (req: AuthRequest, res: Respon
 // Delete job
 router.delete("/jobs/:jobId", authenticateSuperAdmin, async (req: AuthRequest, res: Response) => {
   try {
-    const db = await getDatabase();
-    const user = await db.get("SELECT * FROM users WHERE id = ?", [req.userId]);
+    await getDatabase();
+    const user = await User.findOne({ id: req.userId });
 
     if (user?.role !== "superadmin") {
       return res.status(403).json({ error: "Unauthorized" });
     }
 
-    await db.run("DELETE FROM jobs WHERE id = ?", [req.params.jobId]);
+    await Job.deleteOne({ id: req.params.jobId });
     res.json({ message: "Job deleted" });
   } catch (error) {
     console.error("Delete job error:", error);
@@ -656,14 +752,14 @@ router.delete("/jobs/:jobId", authenticateSuperAdmin, async (req: AuthRequest, r
 // Get all applications
 router.get("/applications", authenticateSuperAdmin, async (req: AuthRequest, res: Response) => {
   try {
-    const db = await getDatabase();
-    const user = await db.get("SELECT * FROM users WHERE id = ?", [req.userId]);
+    await getDatabase();
+    const user = await User.findOne({ id: req.userId });
 
     if (user?.role !== "superadmin") {
       return res.status(403).json({ error: "Unauthorized" });
     }
 
-    const applications = await db.all("SELECT * FROM applications ORDER BY createdAt DESC");
+    const applications = await Application.find({}).sort({ createdAt: -1 });
     res.json(applications);
   } catch (error) {
     console.error("Get applications error:", error);
@@ -674,16 +770,14 @@ router.get("/applications", authenticateSuperAdmin, async (req: AuthRequest, res
 // Get CVs (applications with resume)
 router.get("/cvs", authenticateSuperAdmin, async (req: AuthRequest, res: Response) => {
   try {
-    const db = await getDatabase();
-    const user = await db.get("SELECT * FROM users WHERE id = ?", [req.userId]);
+    await getDatabase();
+    const user = await User.findOne({ id: req.userId });
 
     if (user?.role !== "superadmin") {
       return res.status(403).json({ error: "Unauthorized" });
     }
 
-    const cvs = await db.all(
-      "SELECT a.*, u.email, u.firstName, u.lastName FROM applications a JOIN users u ON a.userId = u.id WHERE a.resume IS NOT NULL"
-    );
+    const cvs = await Application.find({ resume: { $ne: null } }).populate('userId', 'email firstName lastName');
     res.json(cvs);
   } catch (error) {
     console.error("Get CVs error:", error);

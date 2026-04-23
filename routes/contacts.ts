@@ -1,6 +1,6 @@
 import express, { Router, Request, Response } from "express";
 import { v4 as uuidv4 } from "uuid";
-import { getDatabase } from "../src/db.js";
+import { getDatabase, Contact } from "../src/db.js";
 
 const router = Router();
 
@@ -13,14 +13,19 @@ router.post("/", async (req: Request, res: Response) => {
       return res.status(400).json({ error: "Missing required fields" });
     }
 
-    const db = await getDatabase();
-    const contactId = uuidv4();
-    const now = new Date().toISOString();
+    await getDatabase();
 
-    await db.run(
-      "INSERT INTO contacts (id, name, email, phone, message, createdAt) VALUES (?, ?, ?, ?, ?, ?)",
-      [contactId, name, email, phone || "", message, now]
-    );
+    const contactId = uuidv4();
+
+    const contact = new Contact({
+      id: contactId,
+      name,
+      email,
+      phone: phone || "",
+      message,
+    });
+
+    await contact.save();
 
     res.json({
       id: contactId,

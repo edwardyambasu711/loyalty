@@ -1,6 +1,6 @@
 import express, { Router, Request, Response } from "express";
 import { v4 as uuidv4 } from "uuid";
-import { getDatabase } from "../src/db.js";
+import { getDatabase, Application, Job, User } from "../src/db.js";
 import { authenticateToken, AuthRequest } from "../middleware/auth.js";
 
 const router = Router();
@@ -14,36 +14,38 @@ router.post("/", authenticateToken, async (req: AuthRequest, res: Response) => {
       return res.status(400).json({ error: "Job ID required" });
     }
 
-    const db = await getDatabase();
+    await getDatabase();
 
     // Check if job exists
-    const job = await db.get("SELECT * FROM jobs WHERE id = ?", [jobId]);
+    const job = await Job.findOne({ id: jobId });
     if (!job) {
       return res.status(404).json({ error: "Job not found" });
     }
 
     // Check if already applied
-    const existing = await db.get(
-      "SELECT * FROM applications WHERE jobId = ? AND userId = ?",
-      [jobId, req.userId]
-    );
+    const existing = await Application.findOne({ jobId, userId: req.userId });
     if (existing) {
       return res.status(400).json({ error: "Already applied to this job" });
     }
 
     const appId = uuidv4();
-    const now = new Date().toISOString();
 
-    await db.run(
-      "INSERT INTO applications (id, jobId, userId, status, resume, coverLetter, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-      [appId, jobId, req.userId, "pending", resume || "", coverLetter || "", now, now]
-    );
+    const application = new Application({
+      id: appId,
+      jobId,
+      userId: req.userId,
+      status: "pending",
+      resume: resume || "",
+      coverLetter: coverLetter || "",
+    });
+
+    await application.save();
 
     res.json({
       id: appId,
       jobId,
       status: "pending",
-      createdAt: now,
+      createdAt: application.createdAt,
     });
   } catch (error) {
     console.error("Apply error:", error);
@@ -54,25 +56,21 @@ router.post("/", authenticateToken, async (req: AuthRequest, res: Response) => {
 // Get user's applications
 router.get("/my-applications", authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
-    const db = await getDatabase();
-    const applications = await db.all(
-      `SELECT a.*, j.title, j.company, j.location, j.type, j.salary
-       FROM applications a
-       JOIN jobs j ON a.jobId = j.id
-       WHERE a.userId = ?
-       ORDER BY a.createdAt DESC`,
-      [req.userId]
-    );
+    await getDatabase();
+
+    const applications = await Application.find({ userId: req.userId })
+      .sort({ createdAt: -1 })
+      .populate('jobId', 'title company location type salary');
 
     res.json(
       applications.map((app: any) => ({
         id: app.id,
-        jobId: app.jobId,
-        jobTitle: app.title,
-        company: app.company,
-        location: app.location,
-        type: app.type,
-        salary: app.salary,
+        jobId: app.jobId?.id,
+        jobTitle: app.jobId?.title,
+        company: app.jobId?.company,
+        location: app.jobId?.location,
+        type: app.jobId?.type,
+        salary: app.jobId?.salary,
         status: app.status,
         appliedAt: app.createdAt,
       }))
@@ -86,29 +84,24 @@ router.get("/my-applications", authenticateToken, async (req: AuthRequest, res: 
 // Get applications for a job (by employer)
 router.get("/job/:jobId", authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
-    const db = await getDatabase();
+    await getDatabase();
 
     // Verify job ownership
-    const job = await db.get("SELECT userId FROM jobs WHERE id = ?", [req.params.jobId]);
+    const job = await Job.findOne({ id: req.params.jobId });
     if (!job || job.userId !== req.userId) {
       return res.status(403).json({ error: "Not authorized to view applications" });
     }
 
-    const applications = await db.all(
-      `SELECT a.*, u.firstName, u.lastName, u.email, u.phone
-       FROM applications a
-       JOIN users u ON a.userId = u.id
-       WHERE a.jobId = ?
-       ORDER BY a.createdAt DESC`,
-      [req.params.jobId]
-    );
+    const applications = await Application.find({ jobId: req.params.jobId })
+      .sort({ createdAt: -1 })
+      .populate('userId', 'firstName lastName email phone');
 
     res.json(
       applications.map((app: any) => ({
         id: app.id,
-        candidateName: `${app.firstName} ${app.lastName}`,
-        email: app.email,
-        phone: app.phone,
+        candidateName: `${app.userId?.firstName} ${app.userId?.lastName}`,
+        email: app.userId?.email,
+        phone: app.userId?.phone,
         status: app.status,
         resume: app.resume,
         coverLetter: app.coverLetter,
@@ -125,25 +118,21 @@ router.get("/job/:jobId", authenticateToken, async (req: AuthRequest, res: Respo
 router.put("/:id/status", authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const { status } = req.body;
-    const db = await getDatabase();
+    await getDatabase();
 
     if (!["pending", "rejected", "shortlisted", "accepted"].includes(status)) {
       return res.status(400).json({ error: "Invalid status" });
     }
 
     // Get application to verify permissions
-    const app = await db.get(
-      `SELECT a.*, j.userId FROM applications a JOIN jobs j ON a.jobId = j.id WHERE a.id = ?`,
-      [req.params.id]
-    );
-
-    if (!app || app.userId !== req.userId) {
+    const app = await Application.findOne({ id: req.params.id }).populate('jobId', 'userId');
+    if (!app || app.jobId?.userId !== req.userId) {
       return res.status(403).json({ error: "Not authorized to update this application" });
     }
 
-    await db.run(
-      "UPDATE applications SET status = ?, updatedAt = ? WHERE id = ?",
-      [status, new Date().toISOString(), req.params.id]
+    await Application.findOneAndUpdate(
+      { id: req.params.id },
+      { status, updatedAt: new Date() }
     );
 
     res.json({ success: true, status });

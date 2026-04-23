@@ -1,7 +1,7 @@
 import express, { Router, Request, Response } from "express";
 import bcryptjs from "bcryptjs";
 import { v4 as uuidv4 } from "uuid";
-import { getDatabase } from "../src/db.js";
+import { getDatabase, User } from "../src/db.js";
 import { generateToken, authenticateToken, AuthRequest } from "../middleware/auth.js";
 
 const router = Router();
@@ -15,8 +15,9 @@ router.post("/register", async (req: Request, res: Response) => {
       return res.status(400).json({ error: "Email and password required" });
     }
 
-    const db = await getDatabase();
-    const existingUser = await db.get("SELECT * FROM users WHERE email = ?", [email]);
+    await getDatabase();
+
+    const existingUser = await User.findOne({ email });
 
     if (existingUser) {
       return res.status(400).json({ error: "User already exists" });
@@ -24,12 +25,17 @@ router.post("/register", async (req: Request, res: Response) => {
 
     const hashedPassword = await bcryptjs.hash(password, 10);
     const userId = uuidv4();
-    const now = new Date().toISOString();
 
-    await db.run(
-      "INSERT INTO users (id, email, password, firstName, lastName, role, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-      [userId, email, hashedPassword, firstName || "", lastName || "", role || "candidate", now, now]
-    );
+    const user = new User({
+      id: userId,
+      email,
+      password: hashedPassword,
+      firstName: firstName || "",
+      lastName: lastName || "",
+      role: role || "candidate",
+    });
+
+    await user.save();
 
     const token = generateToken(userId);
     res.json({
@@ -57,8 +63,9 @@ router.post("/login", async (req: Request, res: Response) => {
       return res.status(400).json({ error: "Email and password required" });
     }
 
-    const db = await getDatabase();
-    const user = await db.get("SELECT * FROM users WHERE email = ?", [email]);
+    await getDatabase();
+
+    const user = await User.findOne({ email });
 
     if (!user) {
       return res.status(401).json({ error: "Invalid email or password" });
@@ -90,8 +97,9 @@ router.post("/login", async (req: Request, res: Response) => {
 // Get current user
 router.get("/me", authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
-    const db = await getDatabase();
-    const user = await db.get("SELECT * FROM users WHERE id = ?", [req.userId]);
+    await getDatabase();
+
+    const user = await User.findOne({ id: req.userId });
 
     if (!user) {
       return res.status(404).json({ error: "User not found" });
@@ -118,24 +126,32 @@ router.get("/me", authenticateToken, async (req: AuthRequest, res: Response) => 
 router.put("/profile", authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const { firstName, lastName, company, phone, bio, avatar } = req.body;
-    const db = await getDatabase();
+    await getDatabase();
 
-    await db.run(
-      "UPDATE users SET firstName = ?, lastName = ?, company = ?, phone = ?, bio = ?, avatar = ?, updatedAt = ? WHERE id = ?",
-      [firstName || "", lastName || "", company || "", phone || "", bio || "", avatar || "", new Date().toISOString(), req.userId]
+    await User.findOneAndUpdate(
+      { id: req.userId },
+      {
+        firstName: firstName || "",
+        lastName: lastName || "",
+        company: company || "",
+        phone: phone || "",
+        bio: bio || "",
+        avatar: avatar || "",
+        updatedAt: new Date(),
+      }
     );
 
-    const user = await db.get("SELECT * FROM users WHERE id = ?", [req.userId]);
+    const user = await User.findOne({ id: req.userId });
     res.json({
-      id: user.id,
-      email: user.email,
-      firstName: user.firstName,
-      lastName: user.lastName,
-      role: user.role,
-      company: user.company,
-      phone: user.phone,
-      bio: user.bio,
-      avatar: user.avatar,
+      id: user?.id,
+      email: user?.email,
+      firstName: user?.firstName,
+      lastName: user?.lastName,
+      role: user?.role,
+      company: user?.company,
+      phone: user?.phone,
+      bio: user?.bio,
+      avatar: user?.avatar,
     });
   } catch (error) {
     console.error("Update profile error:", error);
