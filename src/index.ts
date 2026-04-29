@@ -15,7 +15,7 @@ const PORT = process.env.PORT || 5000;
 
 // Middleware
 app.use(cors({
-  origin: "https://loyalty-hr.vercel.app"
+  origin: ["https://loyalty-hr.vercel.app", "https://www.loyaltyhr.com"]
 }));
 app.use(express.json());
 
