@@ -7,6 +7,7 @@ import jobsRouter from "../routes/jobs.js";
 import applicationsRouter from "../routes/applications.js";
 import contactsRouter from "../routes/contacts.js";
 import superadminRouter from "../routes/superadmin.js";
+import schoolRouter from "../routes/school.js";
 
 dotenv.config();
 
@@ -15,7 +16,14 @@ const PORT = process.env.PORT || 5000;
 
 // Middleware
 app.use(cors({
-  origin: ["https://loyalty-hr.vercel.app", "https://www.loyaltyhr.com"]
+  origin: [
+    "https://loyalty-hr.vercel.app",
+    "https://www.loyaltyhr.com",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:4173",
+    "http://127.0.0.1:4173",
+  ]
 }));
 app.use(express.json());
 
@@ -29,6 +37,7 @@ app.use("/api/auth", usersRouter);
 app.use("/api/jobs", jobsRouter);
 app.use("/api/applications", applicationsRouter);
 app.use("/api/contacts", contactsRouter);
+app.use("/api/courses", schoolRouter);
 app.use("/api/superadmin", superadminRouter);
 
 // Error handling
