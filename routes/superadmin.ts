@@ -1,7 +1,7 @@
 import express, { Router, Request, Response } from "express";
 import bcryptjs from "bcryptjs";
 import { v4 as uuidv4 } from "uuid";
-import { getDatabase, User, Organization, Blog, CaseStudy, Event, Testimonial, FeaturedJob, Job, Application } from "../src/db.js";
+import { getDatabase, User, Organization, Blog, CaseStudy, Event, Testimonial, FeaturedJob, Job, Application, Course, Lesson, Quiz, QuizQuestion, Assignment, Enrollment } from "../src/db.js";
 import { authenticateSuperAdmin, generateToken, AuthRequest } from "../middleware/auth.js";
 
 const router = Router();
@@ -782,6 +782,488 @@ router.get("/cvs", authenticateSuperAdmin, async (req: AuthRequest, res: Respons
   } catch (error) {
     console.error("Get CVs error:", error);
     res.status(500).json({ error: "Failed to fetch CVs" });
+  }
+});
+
+// ============ COURSES MANAGEMENT ============
+
+// Get all courses
+router.get("/courses", authenticateSuperAdmin, async (req: AuthRequest, res: Response) => {
+  try {
+    await getDatabase();
+    const user = await User.findOne({ id: req.userId });
+
+    if (user?.role !== "superadmin") {
+      return res.status(403).json({ error: "Unauthorized" });
+    }
+
+    const courses = await Course.find({}).sort({ createdAt: -1 });
+    res.json(courses);
+  } catch (error) {
+    console.error("Get courses error:", error);
+    res.status(500).json({ error: "Failed to fetch courses" });
+  }
+});
+
+// Get course details with lessons, quizzes, assignments, and enrollments
+router.get("/courses/:courseId", authenticateSuperAdmin, async (req: AuthRequest, res: Response) => {
+  try {
+    await getDatabase();
+    const user = await User.findOne({ id: req.userId });
+
+    if (user?.role !== "superadmin") {
+      return res.status(403).json({ error: "Unauthorized" });
+    }
+
+    const course = await Course.findOne({ id: req.params.courseId });
+    if (!course) {
+      return res.status(404).json({ error: "Course not found" });
+    }
+
+    const lessons = await Lesson.find({ courseId: req.params.courseId }).sort({ order_index: 1 });
+    const quizzes = await Quiz.find({ courseId: req.params.courseId });
+    const assignments = await Assignment.find({ courseId: req.params.courseId });
+    const enrollments = await Enrollment.find({ courseId: req.params.courseId });
+
+    res.json({
+      course,
+      lessons,
+      quizzes,
+      assignments,
+      enrollmentCount: enrollments.length,
+      enrollments: enrollments.map((e) => ({
+        id: e.id,
+        userId: e.userId,
+        status: e.status,
+        progress: e.progress,
+        completedAt: e.completedAt,
+        createdAt: e.createdAt,
+      })),
+    });
+  } catch (error) {
+    console.error("Get course details error:", error);
+    res.status(500).json({ error: "Failed to fetch course details" });
+  }
+});
+
+// Create course
+router.post("/courses", authenticateSuperAdmin, async (req: AuthRequest, res: Response) => {
+  try {
+    await getDatabase();
+    const user = await User.findOne({ id: req.userId });
+
+    if (user?.role !== "superadmin") {
+      return res.status(403).json({ error: "Unauthorized" });
+    }
+
+    const { title, slug, description, price, category, cover_image_url, is_published, pass_threshold } = req.body;
+
+    if (!title || !slug) {
+      return res.status(400).json({ error: "Title and slug required" });
+    }
+
+    const existing = await Course.findOne({ slug });
+    if (existing) {
+      return res.status(400).json({ error: "Slug already exists" });
+    }
+
+    const id = uuidv4();
+    const now = new Date();
+
+    const course = new Course({
+      id,
+      slug,
+      title,
+      description: description || "",
+      price: price || "",
+      category: category || "",
+      cover_image_url: cover_image_url || "",
+      is_published: is_published !== undefined ? is_published : true,
+      pass_threshold: pass_threshold || 70,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await course.save();
+
+    res.json({ id, title, slug });
+  } catch (error) {
+    console.error("Create course error:", error);
+    res.status(500).json({ error: "Failed to create course" });
+  }
+});
+
+// Update course
+router.put("/courses/:courseId", authenticateSuperAdmin, async (req: AuthRequest, res: Response) => {
+  try {
+    await getDatabase();
+    const user = await User.findOne({ id: req.userId });
+
+    if (user?.role !== "superadmin") {
+      return res.status(403).json({ error: "Unauthorized" });
+    }
+
+    const { title, description, price, category, cover_image_url, is_published, pass_threshold } = req.body;
+    const now = new Date();
+
+    await Course.findOneAndUpdate(
+      { id: req.params.courseId },
+      {
+        title,
+        description: description || "",
+        price: price || "",
+        category: category || "",
+        cover_image_url: cover_image_url || "",
+        is_published: is_published !== undefined ? is_published : true,
+        pass_threshold: pass_threshold || 70,
+        updatedAt: now,
+      }
+    );
+
+    res.json({ message: "Course updated" });
+  } catch (error) {
+    console.error("Update course error:", error);
+    res.status(500).json({ error: "Failed to update course" });
+  }
+});
+
+// Delete course
+router.delete("/courses/:courseId", authenticateSuperAdmin, async (req: AuthRequest, res: Response) => {
+  try {
+    await getDatabase();
+    const user = await User.findOne({ id: req.userId });
+
+    if (user?.role !== "superadmin") {
+      return res.status(403).json({ error: "Unauthorized" });
+    }
+
+    // Delete all related data
+    await Lesson.deleteMany({ courseId: req.params.courseId });
+    await Quiz.deleteMany({ courseId: req.params.courseId });
+    await Assignment.deleteMany({ courseId: req.params.courseId });
+    await Enrollment.deleteMany({ courseId: req.params.courseId });
+    await Course.deleteOne({ id: req.params.courseId });
+
+    res.json({ message: "Course deleted" });
+  } catch (error) {
+    console.error("Delete course error:", error);
+    res.status(500).json({ error: "Failed to delete course" });
+  }
+});
+
+// ============ LESSONS MANAGEMENT ============
+
+// Create lesson
+router.post("/courses/:courseId/lessons", authenticateSuperAdmin, async (req: AuthRequest, res: Response) => {
+  try {
+    await getDatabase();
+    const user = await User.findOne({ id: req.userId });
+
+    if (user?.role !== "superadmin") {
+      return res.status(403).json({ error: "Unauthorized" });
+    }
+
+    const { title, content, order_index, objectives, estimated_duration, videos, readings, materials } = req.body;
+
+    if (!title) {
+      return res.status(400).json({ error: "Title required" });
+    }
+
+    const id = uuidv4();
+    const now = new Date();
+
+    const lesson = new Lesson({
+      id,
+      courseId: req.params.courseId,
+      title,
+      content: content || "",
+      order_index: order_index ?? 0,
+      objectives: objectives || [],
+      estimated_duration: estimated_duration || 0,
+      videos: videos || [],
+      readings: readings || [],
+      materials: materials || [],
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await lesson.save();
+
+    res.json({ id, title });
+  } catch (error) {
+    console.error("Create lesson error:", error);
+    res.status(500).json({ error: "Failed to create lesson" });
+  }
+});
+
+// Update lesson
+router.put("/courses/:courseId/lessons/:lessonId", authenticateSuperAdmin, async (req: AuthRequest, res: Response) => {
+  try {
+    await getDatabase();
+    const user = await User.findOne({ id: req.userId });
+
+    if (user?.role !== "superadmin") {
+      return res.status(403).json({ error: "Unauthorized" });
+    }
+
+    const { title, content, order_index, objectives, estimated_duration, videos, readings, materials } = req.body;
+    const now = new Date();
+
+    await Lesson.findOneAndUpdate(
+      { id: req.params.lessonId, courseId: req.params.courseId },
+      {
+        title,
+        content: content || "",
+        order_index: order_index ?? 0,
+        objectives: objectives || [],
+        estimated_duration: estimated_duration || 0,
+        videos: videos || [],
+        readings: readings || [],
+        materials: materials || [],
+        updatedAt: now,
+      }
+    );
+
+    res.json({ message: "Lesson updated" });
+  } catch (error) {
+    console.error("Update lesson error:", error);
+    res.status(500).json({ error: "Failed to update lesson" });
+  }
+});
+
+// Delete lesson
+router.delete("/courses/:courseId/lessons/:lessonId", authenticateSuperAdmin, async (req: AuthRequest, res: Response) => {
+  try {
+    await getDatabase();
+    const user = await User.findOne({ id: req.userId });
+
+    if (user?.role !== "superadmin") {
+      return res.status(403).json({ error: "Unauthorized" });
+    }
+
+    // Delete related quizzes
+    await Quiz.deleteMany({ lessonId: req.params.lessonId });
+    await Lesson.deleteOne({ id: req.params.lessonId });
+
+    res.json({ message: "Lesson deleted" });
+  } catch (error) {
+    console.error("Delete lesson error:", error);
+    res.status(500).json({ error: "Failed to delete lesson" });
+  }
+});
+
+// ============ QUIZZES MANAGEMENT ============
+
+// Create quiz
+router.post("/courses/:courseId/quizzes", authenticateSuperAdmin, async (req: AuthRequest, res: Response) => {
+  try {
+    await getDatabase();
+    const user = await User.findOne({ id: req.userId });
+
+    if (user?.role !== "superadmin") {
+      return res.status(403).json({ error: "Unauthorized" });
+    }
+
+    const { lessonId, title, kind, pass_threshold, questions } = req.body;
+
+    if (!title) {
+      return res.status(400).json({ error: "Title required" });
+    }
+
+    const id = uuidv4();
+    const now = new Date();
+
+    const quiz = new Quiz({
+      id,
+      courseId: req.params.courseId,
+      lessonId: lessonId || null,
+      title,
+      kind: kind || "quiz",
+      pass_threshold: pass_threshold || 70,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await quiz.save();
+
+    // Create questions if provided
+    if (questions && Array.isArray(questions)) {
+      for (const [index, q] of questions.entries()) {
+        const questionId = uuidv4();
+        const question = new QuizQuestion({
+          id: questionId,
+          quizId: id,
+          prompt: q.prompt,
+          options: q.options,
+          correct_index: q.correct_index,
+          order_index: index,
+          createdAt: now,
+          updatedAt: now,
+        });
+        await question.save();
+      }
+    }
+
+    res.json({ id, title });
+  } catch (error) {
+    console.error("Create quiz error:", error);
+    res.status(500).json({ error: "Failed to create quiz" });
+  }
+});
+
+// Update quiz
+router.put("/courses/:courseId/quizzes/:quizId", authenticateSuperAdmin, async (req: AuthRequest, res: Response) => {
+  try {
+    await getDatabase();
+    const user = await User.findOne({ id: req.userId });
+
+    if (user?.role !== "superadmin") {
+      return res.status(403).json({ error: "Unauthorized" });
+    }
+
+    const { title, kind, pass_threshold } = req.body;
+    const now = new Date();
+
+    await Quiz.findOneAndUpdate(
+      { id: req.params.quizId, courseId: req.params.courseId },
+      {
+        title,
+        kind: kind || "quiz",
+        pass_threshold: pass_threshold || 70,
+        updatedAt: now,
+      }
+    );
+
+    res.json({ message: "Quiz updated" });
+  } catch (error) {
+    console.error("Update quiz error:", error);
+    res.status(500).json({ error: "Failed to update quiz" });
+  }
+});
+
+// Delete quiz
+router.delete("/courses/:courseId/quizzes/:quizId", authenticateSuperAdmin, async (req: AuthRequest, res: Response) => {
+  try {
+    await getDatabase();
+    const user = await User.findOne({ id: req.userId });
+
+    if (user?.role !== "superadmin") {
+      return res.status(403).json({ error: "Unauthorized" });
+    }
+
+    // Delete related questions
+    await QuizQuestion.deleteMany({ quizId: req.params.quizId });
+    await Quiz.deleteOne({ id: req.params.quizId });
+
+    res.json({ message: "Quiz deleted" });
+  } catch (error) {
+    console.error("Delete quiz error:", error);
+    res.status(500).json({ error: "Failed to delete quiz" });
+  }
+});
+
+// ============ ASSIGNMENTS MANAGEMENT ============
+
+// Create assignment
+router.post("/courses/:courseId/assignments", authenticateSuperAdmin, async (req: AuthRequest, res: Response) => {
+  try {
+    await getDatabase();
+    const user = await User.findOne({ id: req.userId });
+
+    if (user?.role !== "superadmin") {
+      return res.status(403).json({ error: "Unauthorized" });
+    }
+
+    const { title, instructions } = req.body;
+
+    if (!title) {
+      return res.status(400).json({ error: "Title required" });
+    }
+
+    const id = uuidv4();
+    const now = new Date();
+
+    const assignment = new Assignment({
+      id,
+      courseId: req.params.courseId,
+      title,
+      instructions: instructions || "",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await assignment.save();
+
+    res.json({ id, title });
+  } catch (error) {
+    console.error("Create assignment error:", error);
+    res.status(500).json({ error: "Failed to create assignment" });
+  }
+});
+
+// Update assignment
+router.put("/courses/:courseId/assignments/:assignmentId", authenticateSuperAdmin, async (req: AuthRequest, res: Response) => {
+  try {
+    await getDatabase();
+    const user = await User.findOne({ id: req.userId });
+
+    if (user?.role !== "superadmin") {
+      return res.status(403).json({ error: "Unauthorized" });
+    }
+
+    const { title, instructions } = req.body;
+    const now = new Date();
+
+    await Assignment.findOneAndUpdate(
+      { id: req.params.assignmentId, courseId: req.params.courseId },
+      {
+        title,
+        instructions: instructions || "",
+        updatedAt: now,
+      }
+    );
+
+    res.json({ message: "Assignment updated" });
+  } catch (error) {
+    console.error("Update assignment error:", error);
+    res.status(500).json({ error: "Failed to update assignment" });
+  }
+});
+
+// Delete assignment
+router.delete("/courses/:courseId/assignments/:assignmentId", authenticateSuperAdmin, async (req: AuthRequest, res: Response) => {
+  try {
+    await getDatabase();
+    const user = await User.findOne({ id: req.userId });
+
+    if (user?.role !== "superadmin") {
+      return res.status(403).json({ error: "Unauthorized" });
+    }
+
+    await Assignment.deleteOne({ id: req.params.assignmentId });
+
+    res.json({ message: "Assignment deleted" });
+  } catch (error) {
+    console.error("Delete assignment error:", error);
+    res.status(500).json({ error: "Failed to delete assignment" });
+  }
+});
+
+// Get course enrollments
+router.get("/courses/:courseId/enrollments", authenticateSuperAdmin, async (req: AuthRequest, res: Response) => {
+  try {
+    await getDatabase();
+    const user = await User.findOne({ id: req.userId });
+
+    if (user?.role !== "superadmin") {
+      return res.status(403).json({ error: "Unauthorized" });
+    }
+
+    const enrollments = await Enrollment.find({ courseId: req.params.courseId });
+    res.json(enrollments);
+  } catch (error) {
+    console.error("Get enrollments error:", error);
+    res.status(500).json({ error: "Failed to fetch enrollments" });
   }
 });
 

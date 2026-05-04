@@ -89,6 +89,29 @@ export const CourseSchema = new mongoose.Schema({
   updatedAt: { type: Date, default: Date.now }
 });
 
+const LessonVideoSchema = new mongoose.Schema({
+  id: { type: String, required: true },
+  title: { type: String, required: true },
+  url: { type: String, required: true },
+  transcript: { type: String, default: '' },
+  duration: { type: Number, default: 0 },
+}, { _id: false });
+
+const LessonReadingSchema = new mongoose.Schema({
+  id: { type: String, required: true },
+  title: { type: String, required: true },
+  url: { type: String, required: true },
+  content: { type: String, default: '' },
+  type: { type: String, enum: ['article', 'pdf', 'external'], default: 'external' },
+}, { _id: false });
+
+const LessonMaterialSchema = new mongoose.Schema({
+  id: { type: String, required: true },
+  name: { type: String, required: true },
+  url: { type: String, required: true },
+  type: { type: String, default: '' },
+}, { _id: false });
+
 // Lesson Schema
 export const LessonSchema = new mongoose.Schema({
   id: { type: String, required: true, unique: true },
@@ -96,6 +119,11 @@ export const LessonSchema = new mongoose.Schema({
   title: { type: String, required: true },
   content: { type: String, default: '' },
   order_index: { type: Number, default: 0 },
+  objectives: { type: [String], default: [] },
+  estimated_duration: { type: Number, default: 0 },
+  videos: { type: [LessonVideoSchema], default: [] },
+  readings: { type: [LessonReadingSchema], default: [] },
+  materials: { type: [LessonMaterialSchema], default: [] },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now }
 });
