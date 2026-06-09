@@ -156,6 +156,169 @@ router.get("/:courseId/content", authenticateToken, async (req: AuthRequest, res
   }
 });
 
+// Sync course enrollment by slug
+router.post("/sync/enroll", authenticateToken, async (req: AuthRequest, res: Response) => {
+  try {
+    await getDatabase();
+    const { courseSlug } = req.body;
+    if (!courseSlug) return res.status(400).json({ error: "Course slug is required" });
+
+    const existing = await Enrollment.findOne({ courseId: courseSlug, userId: req.userId });
+    if (existing) return res.json({ success: true, enrolled: true });
+
+    const enrollment = new Enrollment({
+      id: uuidv4(),
+      courseId: courseSlug,
+      userId: req.userId,
+      status: "active",
+      progress: 0,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    await enrollment.save();
+
+    res.json({ success: true, enrolled: true });
+  } catch (error) {
+    console.error("Sync enroll error:", error);
+    res.status(500).json({ error: "Failed to sync enrollment" });
+  }
+});
+
+// Sync lesson progress by slug and lesson ID
+router.post("/sync/lesson-progress", authenticateToken, async (req: AuthRequest, res: Response) => {
+  try {
+    await getDatabase();
+    const { courseSlug, lessonId } = req.body;
+    if (!courseSlug || !lessonId) return res.status(400).json({ error: "Course slug and lesson ID are required" });
+
+    const existing = await LessonProgress.findOne({ userId: req.userId, lessonId });
+    if (existing) return res.json({ success: true });
+
+    const progress = new LessonProgress({
+      id: uuidv4(),
+      userId: req.userId,
+      courseId: courseSlug,
+      lessonId,
+      createdAt: new Date(),
+    });
+    await progress.save();
+
+    await Enrollment.findOneAndUpdate(
+      { userId: req.userId, courseId: courseSlug },
+      { userId: req.userId, courseId: courseSlug, status: "active", updatedAt: new Date() },
+      { upsert: true, setDefaultsOnInsert: true }
+    );
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error("Sync lesson progress error:", error);
+    res.status(500).json({ error: "Failed to sync lesson progress" });
+  }
+});
+
+// Sync quiz attempt by slug and quiz ID
+router.post("/sync/quiz-attempts", authenticateToken, async (req: AuthRequest, res: Response) => {
+  try {
+    await getDatabase();
+    const { courseSlug, quizId, answers, score, passed, kind, courseTitle, studentName } = req.body;
+    if (!courseSlug || !quizId || typeof score !== "number" || typeof passed !== "boolean" || !answers) {
+      return res.status(400).json({ error: "Course slug, quiz ID, answers, score, and passed flag are required" });
+    }
+
+    const attempt = new QuizAttempt({
+      id: uuidv4(),
+      userId: req.userId,
+      courseId: courseSlug,
+      quizId,
+      score,
+      passed,
+      answers,
+      createdAt: new Date(),
+    });
+    await attempt.save();
+
+    let certificate = null;
+    if (kind === "final_test" && passed) {
+      const existingCert = await Certificate.findOne({ userId: req.userId, courseId: courseSlug });
+      if (!existingCert) {
+        const verificationCode = `LHR-${Math.random().toString(36).substring(2, 10).toUpperCase()}`;
+        certificate = new Certificate({
+          id: uuidv4(),
+          courseId: courseSlug,
+          userId: req.userId,
+          studentName: studentName || "Student",
+          courseTitle: courseTitle || "Course",
+          finalScore: score,
+          verificationCode,
+          issuedAt: new Date().toISOString(),
+          createdAt: new Date(),
+        });
+        await certificate.save();
+      }
+
+      const existingEnrollment = await Enrollment.findOne({ userId: req.userId, courseId: courseSlug });
+      if (existingEnrollment) {
+        existingEnrollment.status = "completed";
+        existingEnrollment.progress = 100;
+        existingEnrollment.updatedAt = new Date();
+        await existingEnrollment.save();
+      } else {
+        const enrollment = new Enrollment({
+          id: uuidv4(),
+          courseId: courseSlug,
+          userId: req.userId,
+          status: "completed",
+          progress: 100,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        });
+        await enrollment.save();
+      }
+    }
+
+    res.json({ attempt, certificate });
+  } catch (error) {
+    console.error("Sync quiz attempt error:", error);
+    res.status(500).json({ error: "Failed to sync quiz attempt" });
+  }
+});
+
+// Sync assignment submission by slug and assignment title
+router.post("/sync/assignments", authenticateToken, async (req: AuthRequest, res: Response) => {
+  try {
+    await getDatabase();
+    const { courseSlug, assignmentTitle, submission } = req.body;
+    if (!courseSlug || !assignmentTitle || !submission) {
+      return res.status(400).json({ error: "Course slug, assignment title, and submission text are required" });
+    }
+
+    const assignmentId = `${courseSlug}:${assignmentTitle}`;
+    const existing = await AssignmentSubmission.findOne({ userId: req.userId, assignmentId });
+    if (existing) return res.status(400).json({ error: "Assignment already submitted" });
+
+    const submissionDoc = new AssignmentSubmission({
+      id: uuidv4(),
+      userId: req.userId,
+      courseId: courseSlug,
+      assignmentId,
+      submission,
+      createdAt: new Date(),
+    });
+    await submissionDoc.save();
+
+    await Enrollment.findOneAndUpdate(
+      { userId: req.userId, courseId: courseSlug },
+      { userId: req.userId, courseId: courseSlug, status: "active", updatedAt: new Date() },
+      { upsert: true, setDefaultsOnInsert: true }
+    );
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error("Sync assignment submission error:", error);
+    res.status(500).json({ error: "Failed to sync assignment submission" });
+  }
+});
+
 // Enroll in course
 router.post("/:courseId/enroll", authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
@@ -217,6 +380,9 @@ router.post("/:courseId/lesson-progress", authenticateToken, async (req: AuthReq
 router.post("/:courseId/quiz-attempts", authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     await getDatabase();
+    const course = await Course.findOne({ id: req.params.courseId });
+    if (!course) return res.status(404).json({ error: "Course not found" });
+
     const { quizId, answers } = req.body;
     if (!quizId || !answers) return res.status(400).json({ error: "Quiz ID and answers are required" });
 
