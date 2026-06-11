@@ -1,7 +1,23 @@
 import express, { Router, Request, Response } from "express";
 import { v4 as uuidv4 } from "uuid";
+import Stripe from "stripe";
 import { getDatabase, User, Course, Lesson, Quiz, QuizQuestion, Assignment, Enrollment, LessonProgress, QuizAttempt, AssignmentSubmission, Certificate } from "../src/db.js";
 import { authenticateToken, verifyToken, AuthRequest } from "../middleware/auth.js";
+
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || "", {
+  apiVersion: "2023-11-15",
+});
+
+function parseCoursePrice(price: string): number {
+  const normalized = (price || "").replace(/[^0-9.]/g, "");
+  const value = parseFloat(normalized);
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  return Math.round(value * 100);
+}
+
+function getClientUrl() {
+  return process.env.CLIENT_URL || "http://localhost:5173";
+}
 
 const router = Router();
 
@@ -75,6 +91,105 @@ router.get("/slug/:slug", async (req: Request, res: Response) => {
   } catch (error) {
     console.error("Get course by slug error:", error);
     res.status(500).json({ error: "Failed to fetch course" });
+  }
+});
+
+// Create Stripe checkout session for a course
+router.post("/slug/:slug/checkout", authenticateToken, async (req: AuthRequest, res: Response) => {
+  try {
+    if (!process.env.STRIPE_SECRET_KEY) {
+      return res.status(500).json({ error: "Stripe is not configured" });
+    }
+
+    await getDatabase();
+    const user = await User.findOne({ id: req.userId });
+    if (!user) return res.status(401).json({ error: "Unauthorized" });
+
+    const course = await Course.findOne({ slug: req.params.slug });
+    if (!course) return res.status(404).json({ error: "Course not found" });
+
+    const amount = parseCoursePrice(course.price || "");
+    if (amount <= 0) {
+      return res.status(400).json({ error: "Course price is invalid" });
+    }
+
+    const session = await stripe.checkout.sessions.create({
+      mode: "payment",
+      payment_method_types: ["card"],
+      line_items: [
+        {
+          price_data: {
+            currency: "usd",
+            product_data: {
+              name: course.title,
+              description: course.description || "Online course payment",
+            },
+            unit_amount: amount,
+          },
+          quantity: 1,
+        },
+      ],
+      customer_email: user.email,
+      metadata: {
+        courseId: course.id,
+        courseSlug: course.slug,
+        userId: req.userId,
+      },
+      success_url: `${getClientUrl()}/school/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${getClientUrl()}/school/courses/${course.slug}`,
+    });
+
+    res.json({ url: session.url });
+  } catch (error) {
+    console.error("Create checkout session error:", error);
+    res.status(500).json({ error: "Failed to create checkout session" });
+  }
+});
+
+// Confirm Stripe payment and enroll user
+router.post("/checkout/confirm", authenticateToken, async (req: AuthRequest, res: Response) => {
+  try {
+    if (!process.env.STRIPE_SECRET_KEY) {
+      return res.status(500).json({ error: "Stripe is not configured" });
+    }
+
+    const { sessionId } = req.body;
+    if (!sessionId) return res.status(400).json({ error: "sessionId is required" });
+
+    const session = await stripe.checkout.sessions.retrieve(sessionId as string);
+    if (!session || session.payment_status !== "paid") {
+      return res.status(400).json({ error: "Payment has not completed" });
+    }
+
+    const metadata = session.metadata || {};
+    const courseId = metadata.courseId as string | undefined;
+    const stripeUserId = metadata.userId as string | undefined;
+    if (!courseId || !stripeUserId || stripeUserId !== req.userId) {
+      return res.status(403).json({ error: "Invalid checkout metadata" });
+    }
+
+    await getDatabase();
+    const course = await Course.findOne({ id: courseId });
+    if (!course) return res.status(404).json({ error: "Course not found" });
+
+    const existing = await Enrollment.findOne({ courseId: course.id, userId: req.userId });
+    if (!existing) {
+      const enrollment = new Enrollment({
+        id: uuidv4(),
+        courseId: course.id,
+        userId: req.userId,
+        status: "active",
+        progress: 0,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+      await enrollment.save();
+    }
+
+    res.json({ success: true, enrolled: true, courseId: course.id, courseSlug: course.slug });
+  } catch (error) {
+    console.error("Confirm checkout session error:", error);
+    res.status(500).json({ error: "Failed to confirm checkout session" });
   }
 });
 
